@@ -172,6 +172,7 @@ Grid gameGrid;
 mt19937 randomGenerator;
 Position selected{};
 bool hasSelection = false;
+bool inputBlocked = false;
 string statusMessage;
 
 const COLORREF TileColors[] = {
@@ -197,6 +198,7 @@ void setStatus(const string& message) {
 void startNewGame() {
     gameGrid = initializeGrid(Rows, Columns, randomGenerator);
     hasSelection = false;
+    inputBlocked = false;
     setStatus("Select a tile, then select an adjacent tile to swap.");
 }
 
@@ -289,6 +291,12 @@ LRESULT CALLBACK windowProcedure(HWND window, UINT message, WPARAM wParam, LPARA
         return 0;
     }
     case WM_LBUTTONUP: {
+        // Treat swapping and resolving all resulting matches as one transaction.
+        // This also ignores clicks that may already be queued by Windows.
+        if (inputBlocked) {
+            return 0;
+        }
+
         Position clicked{};
         const int mouseX = static_cast<int>(static_cast<short>(LOWORD(lParam)));
         const int mouseY = static_cast<int>(static_cast<short>(HIWORD(lParam)));
@@ -303,17 +311,28 @@ LRESULT CALLBACK windowProcedure(HWND window, UINT message, WPARAM wParam, LPARA
         } else if (selected.row == clicked.row && selected.column == clicked.column) {
             hasSelection = false;
             setStatus("Selection cleared. Select a tile to begin a swap.");
-        } else if (makeMove(gameGrid, selected, clicked, randomGenerator)) {
-            hasSelection = false;
-            setStatus("Match found! Select another tile to continue.");
         } else {
+            inputBlocked = true;
+            setStatus("Resolving match...");
+            InvalidateRect(window, nullptr, FALSE);
+            UpdateWindow(window);
+
+            const bool validMove = makeMove(gameGrid, selected, clicked, randomGenerator);
+            inputBlocked = false;
             hasSelection = false;
-            setStatus("That swap is invalid or makes no match.");
+            if (validMove) {
+                setStatus("Match found! Select another tile to continue.");
+            } else {
+                setStatus("That swap is invalid or makes no match.");
+            }
         }
         InvalidateRect(window, nullptr, FALSE);
         return 0;
     }
     case WM_KEYDOWN:
+        if (inputBlocked) {
+            return 0;
+        }
         if (wParam == 'R') {
             startNewGame();
             InvalidateRect(window, nullptr, FALSE);
