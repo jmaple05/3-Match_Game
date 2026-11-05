@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <cstdlib>
+#include <functional>
 #include <random>
 #include <sstream>
 #include <string>
@@ -12,6 +13,7 @@
 using namespace std;
 
 using Grid = vector<vector<int>>;
+using AnimationFrame = function<void()>;
 
 constexpr int Rows = 5;
 constexpr int Columns = 5;
@@ -135,13 +137,58 @@ void applyGravityAndFill(Grid& grid, mt19937& randomGenerator) {
     }
 }
 
-void resolveMatches(Grid& grid, mt19937& randomGenerator) {
-    while (checkMatches(grid)) {
-        applyGravityAndFill(grid, randomGenerator);
+void animateGravityAndFill(Grid& grid, mt19937& randomGenerator,
+                           const AnimationFrame& showFrame) {
+    uniform_int_distribution<int> color(1, ColorCount);
+
+    // Move every column one row at a time so each frame exposes the falling
+    // motion instead of jumping directly to the final board state.
+    bool moved = true;
+    while (moved) {
+        moved = false;
+        for (int column = 0; column < static_cast<int>(grid[0].size()); ++column) {
+            for (int row = static_cast<int>(grid.size()) - 1; row > 0; --row) {
+                if (grid[row][column] == 0 && grid[row - 1][column] != 0) {
+                    grid[row][column] = grid[row - 1][column];
+                    grid[row - 1][column] = 0;
+                    moved = true;
+                }
+            }
+        }
+        if (moved) {
+            if (showFrame) {
+                showFrame();
+            }
+        }
+    }
+
+    // Refill the empty spaces from the top, one row at a time, keeping the
+    // board animated when a match creates several new tiles.
+    for (int row = 0; row < static_cast<int>(grid.size()); ++row) {
+        bool filled = false;
+        for (int column = 0; column < static_cast<int>(grid[row].size()); ++column) {
+            if (grid[row][column] == 0) {
+                grid[row][column] = color(randomGenerator);
+                filled = true;
+            }
+        }
+        if (filled) {
+            if (showFrame) {
+                showFrame();
+            }
+        }
     }
 }
 
-bool makeMove(Grid& grid, Position first, Position second, mt19937& randomGenerator) {
+void resolveMatches(Grid& grid, mt19937& randomGenerator,
+                    const AnimationFrame& showFrame = {}) {
+    while (checkMatches(grid)) {
+        animateGravityAndFill(grid, randomGenerator, showFrame);
+    }
+}
+
+bool makeMove(Grid& grid, Position first, Position second, mt19937& randomGenerator,
+              const AnimationFrame& showFrame = {}) {
     if (!isInside(grid, first.row, first.column) ||
         !isInside(grid, second.row, second.column) ||
         !areAdjacent(first, second)) {
@@ -154,8 +201,8 @@ bool makeMove(Grid& grid, Position first, Position second, mt19937& randomGenera
         return false;
     }
 
-    applyGravityAndFill(grid, randomGenerator);
-    resolveMatches(grid, randomGenerator); // Check for new matches after gravity and fill.
+    animateGravityAndFill(grid, randomGenerator, showFrame);
+    resolveMatches(grid, randomGenerator, showFrame); // Check for new matches after gravity and fill.
     return true;
 }
 
@@ -317,7 +364,13 @@ LRESULT CALLBACK windowProcedure(HWND window, UINT message, WPARAM wParam, LPARA
             InvalidateRect(window, nullptr, FALSE);
             UpdateWindow(window);
 
-            const bool validMove = makeMove(gameGrid, selected, clicked, randomGenerator);
+            const AnimationFrame showGravityFrame = [window]() {
+                InvalidateRect(window, nullptr, FALSE);
+                UpdateWindow(window);
+                Sleep(140);
+            };
+            const bool validMove = makeMove(gameGrid, selected, clicked, randomGenerator,
+                                            showGravityFrame);
             inputBlocked = false;
             hasSelection = false;
             if (validMove) {
