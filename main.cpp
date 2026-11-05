@@ -1,9 +1,13 @@
 #include <algorithm>
-#include <iomanip>
-#include <iostream>
+#include <cstdlib>
 #include <random>
+#include <sstream>
+#include <string>
 #include <utility>
 #include <vector>
+
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
 
 using namespace std;
 
@@ -45,22 +49,6 @@ Grid initializeGrid(int rows, int columns, mt19937& randomGenerator) {
     } while (hasMatches(grid));
 
     return grid;
-}
-
-void printGrid(const Grid& grid) {
-    cout << "\n    ";
-    for (int column = 0; column < static_cast<int>(grid[0].size()); ++column) {
-        cout << setw(3) << column;
-    }
-    cout << '\n';
-
-    for (int row = 0; row < static_cast<int>(grid.size()); ++row) {
-        cout << setw(3) << row << ' ';
-        for (int cell : grid[row]) {
-            cout << setw(3) << cell;
-        }
-        cout << '\n';
-    }
 }
 
 void swapCells(Grid& grid, Position first, Position second) {
@@ -171,40 +159,211 @@ bool makeMove(Grid& grid, Position first, Position second, mt19937& randomGenera
     return true;
 }
 
-int main() {
-    random_device seed;
-    mt19937 randomGenerator(seed());
-    Grid grid = initializeGrid(Rows, Columns, randomGenerator);
+namespace {
 
-    cout << "My 3-match game.\n"
-              << "Enter two adjacent positions as: row column row column.\n"
-              << "Enter -1 to quit.\n";
+constexpr int WindowWidth = 640;
+constexpr int WindowHeight = 700;
+constexpr int TileSize = 92;
+constexpr int TileGap = 8;
+constexpr int BoardWidth = Columns * TileSize + (Columns - 1) * TileGap;
+constexpr int BoardHeight = Rows * TileSize + (Rows - 1) * TileGap;
 
-    while (true) {
-        // A new swap is only allowed after all existing matches are resolved.
-        resolveMatches(grid, randomGenerator);
-        printGrid(grid);
-        cout << "\nSwap: ";
+Grid gameGrid;
+mt19937 randomGenerator;
+Position selected{};
+bool hasSelection = false;
+string statusMessage;
 
-        Position first{};
-        Position second{};
-        if (!(cin >> first.row)) {
-            break;
-        }
-        if (first.row == -1) {
-            break;
-        }
-        if (!(cin >> first.column >> second.row >> second.column)) {
-            cerr << "Please enter four integer coordinates.\n";
-            break;
-        }
+const COLORREF TileColors[] = {
+    RGB(37, 48, 65),   // Empty / background
+    RGB(245, 106, 108),
+    RGB(255, 190, 92),
+    RGB(91, 190, 124),
+    RGB(92, 157, 232),
+};
 
-        if (makeMove(grid, first, second, randomGenerator)) {
-            cout << "Match found.\n";
-        } else {
-            cout << "Invalid move or no match; the swap was reversed.\n";
+RECT boardRect(HWND window) {
+    RECT client{};
+    GetClientRect(window, &client);
+    const int left = (client.right - BoardWidth) / 2;
+    const int top = 120;
+    return {left, top, left + BoardWidth, top + BoardHeight};
+}
+
+void setStatus(const string& message) {
+    statusMessage = message;
+}
+
+void startNewGame() {
+    gameGrid = initializeGrid(Rows, Columns, randomGenerator);
+    hasSelection = false;
+    setStatus("Select a tile, then select an adjacent tile to swap.");
+}
+
+bool positionFromPoint(HWND window, int x, int y, Position& position) {
+    const RECT board = boardRect(window);
+    if (x < board.left || y < board.top || x >= board.right || y >= board.bottom) {
+        return false;
+    }
+
+    const int step = TileSize + TileGap;
+    const int column = (x - board.left) / step;
+    const int row = (y - board.top) / step;
+    const int tileX = (x - board.left) % step;
+    const int tileY = (y - board.top) % step;
+    if (tileX >= TileSize || tileY >= TileSize) {
+        return false;
+    }
+
+    position = {row, column};
+    return true;
+}
+
+void fillRect(HDC deviceContext, const RECT& rectangle, COLORREF color) {
+    HBRUSH brush = CreateSolidBrush(color);
+    FillRect(deviceContext, &rectangle, brush);
+    DeleteObject(brush);
+}
+
+void drawText(HDC deviceContext, const string& text, int x, int y,
+              int width, int height, COLORREF color, int fontSize, UINT format) {
+    SetTextColor(deviceContext, color);
+    SetBkMode(deviceContext, TRANSPARENT);
+    HFONT font = CreateFontA(fontSize, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE,
+                             DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                             CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, "Segoe UI");
+    HFONT previousFont = static_cast<HFONT>(SelectObject(deviceContext, font));
+    RECT rectangle{x, y, x + width, y + height};
+    DrawTextA(deviceContext, text.c_str(), -1, &rectangle, format);
+    SelectObject(deviceContext, previousFont);
+    DeleteObject(font);
+}
+
+void paintWindow(HWND window, HDC deviceContext) {
+    RECT client{};
+    GetClientRect(window, &client);
+    fillRect(deviceContext, client, RGB(19, 25, 38));
+
+    drawText(deviceContext, "3-MATCH", 0, 24, client.right, 42,
+             RGB(245, 248, 252), 30, DT_CENTER | DT_SINGLELINE);
+    drawText(deviceContext, "Swap adjacent tiles to make a line of three", 0, 70,
+             client.right, 26, RGB(163, 176, 197), 15, DT_CENTER | DT_SINGLELINE);
+
+    const RECT board = boardRect(window);
+    for (int row = 0; row < Rows; ++row) {
+        for (int column = 0; column < Columns; ++column) {
+            const int left = board.left + column * (TileSize + TileGap);
+            const int top = board.top + row * (TileSize + TileGap);
+            RECT tile{left, top, left + TileSize, top + TileSize};
+            const int value = gameGrid[row][column];
+            fillRect(deviceContext, tile, TileColors[value]);
+
+            if (hasSelection && selected.row == row && selected.column == column) {
+                HPEN pen = CreatePen(PS_SOLID, 4, RGB(255, 255, 255));
+                HGDIOBJ previousPen = SelectObject(deviceContext, pen);
+                HGDIOBJ previousBrush = SelectObject(deviceContext, GetStockObject(HOLLOW_BRUSH));
+                Rectangle(deviceContext, left + 2, top + 2, left + TileSize - 2, top + TileSize - 2);
+                SelectObject(deviceContext, previousBrush);
+                SelectObject(deviceContext, previousPen);
+                DeleteObject(pen);
+            }
+
+            drawText(deviceContext, to_string(value), left, top + 18, TileSize, 55,
+                     RGB(255, 255, 255), 30, DT_CENTER | DT_SINGLELINE);
         }
     }
 
-    return 0;
+    drawText(deviceContext, statusMessage, 30, 610, client.right - 60, 28,
+             RGB(210, 219, 232), 14, DT_CENTER | DT_SINGLELINE);
+    drawText(deviceContext, "R  New game    |    Esc  Quit", 0, 650, client.right, 24,
+             RGB(120, 137, 161), 13, DT_CENTER | DT_SINGLELINE);
+}
+
+LRESULT CALLBACK windowProcedure(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
+    switch (message) {
+    case WM_PAINT: {
+        PAINTSTRUCT paint{};
+        HDC deviceContext = BeginPaint(window, &paint);
+        paintWindow(window, deviceContext);
+        EndPaint(window, &paint);
+        return 0;
+    }
+    case WM_LBUTTONUP: {
+        Position clicked{};
+        const int mouseX = static_cast<int>(static_cast<short>(LOWORD(lParam)));
+        const int mouseY = static_cast<int>(static_cast<short>(HIWORD(lParam)));
+        if (!positionFromPoint(window, mouseX, mouseY, clicked)) {
+            return 0;
+        }
+
+        if (!hasSelection) {
+            selected = clicked;
+            hasSelection = true;
+            setStatus("Now select an adjacent tile.");
+        } else if (selected.row == clicked.row && selected.column == clicked.column) {
+            hasSelection = false;
+            setStatus("Selection cleared. Select a tile to begin a swap.");
+        } else if (makeMove(gameGrid, selected, clicked, randomGenerator)) {
+            hasSelection = false;
+            setStatus("Match found! Select another tile to continue.");
+        } else {
+            hasSelection = false;
+            setStatus("That swap is invalid or makes no match.");
+        }
+        InvalidateRect(window, nullptr, FALSE);
+        return 0;
+    }
+    case WM_KEYDOWN:
+        if (wParam == 'R') {
+            startNewGame();
+            InvalidateRect(window, nullptr, FALSE);
+            return 0;
+        }
+        if (wParam == VK_ESCAPE) {
+            DestroyWindow(window);
+            return 0;
+        }
+        break;
+    case WM_DESTROY:
+        PostQuitMessage(0);
+        return 0;
+    default:
+        break;
+    }
+    return DefWindowProcA(window, message, wParam, lParam);
+}
+
+} // namespace
+
+int WINAPI WinMain(HINSTANCE instance, HINSTANCE, LPSTR, int showCommand) {
+    random_device seed;
+    randomGenerator.seed(seed());
+    startNewGame();
+
+    const char* className = "MatchGameWindow";
+    WNDCLASSA windowClass{};
+    windowClass.hInstance = instance;
+    windowClass.lpfnWndProc = windowProcedure;
+    windowClass.lpszClassName = className;
+    windowClass.hCursor = LoadCursor(nullptr, IDC_HAND);
+    windowClass.hbrBackground = static_cast<HBRUSH>(GetStockObject(BLACK_BRUSH));
+    RegisterClassA(&windowClass);
+
+    HWND window = CreateWindowExA(
+        0, className, "3-Match Game", WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
+        CW_USEDEFAULT, CW_USEDEFAULT, WindowWidth, WindowHeight,
+        nullptr, nullptr, instance, nullptr);
+    if (window == nullptr) {
+        return 1;
+    }
+
+    ShowWindow(window, showCommand);
+    UpdateWindow(window);
+
+    MSG message{};
+    while (GetMessageA(&message, nullptr, 0, 0) > 0) {
+        TranslateMessage(&message);
+        DispatchMessageA(&message);
+    }
+    return static_cast<int>(message.wParam);
 }
