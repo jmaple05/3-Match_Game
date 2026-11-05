@@ -367,7 +367,7 @@ LRESULT CALLBACK windowProcedure(HWND window, UINT message, WPARAM wParam, LPARA
             const AnimationFrame showGravityFrame = [window]() {
                 InvalidateRect(window, nullptr, FALSE);
                 UpdateWindow(window);
-                Sleep(140);
+                Sleep(250);
             };
             const bool validMove = makeMove(gameGrid, selected, clicked, randomGenerator,
                                             showGravityFrame);
