@@ -5,7 +5,9 @@
 #include <utility>
 #include <vector>
 
-using Grid = std::vector<std::vector<int>>;
+using namespace std;
+
+using Grid = vector<vector<int>>;
 
 constexpr int Rows = 5;
 constexpr int Columns = 5;
@@ -24,17 +26,17 @@ bool isInside(const Grid& grid, int row, int column) {
 }
 
 bool areAdjacent(Position first, Position second) {
-    const int rowDistance = std::abs(first.row - second.row);
-    const int columnDistance = std::abs(first.column - second.column);
+    const int rowDistance = abs(first.row - second.row);
+    const int columnDistance = abs(first.column - second.column);
     return rowDistance + columnDistance == 1;
 }
 
-Grid initializeGrid(int rows, int columns, std::mt19937& randomGenerator) {
-    std::uniform_int_distribution<int> color(1, ColorCount);
+Grid initializeGrid(int rows, int columns, mt19937& randomGenerator) {
+    uniform_int_distribution<int> color(1, ColorCount);
     Grid grid;
 
     do {
-        grid.assign(rows, std::vector<int>(columns));
+        grid.assign(rows, vector<int>(columns));
         for (auto& row : grid) {
             for (int& cell : row) {
                 cell = color(randomGenerator);
@@ -46,23 +48,23 @@ Grid initializeGrid(int rows, int columns, std::mt19937& randomGenerator) {
 }
 
 void printGrid(const Grid& grid) {
-    std::cout << "\n    ";
+    cout << "\n    ";
     for (int column = 0; column < static_cast<int>(grid[0].size()); ++column) {
-        std::cout << std::setw(3) << column;
+        cout << setw(3) << column;
     }
-    std::cout << '\n';
+    cout << '\n';
 
     for (int row = 0; row < static_cast<int>(grid.size()); ++row) {
-        std::cout << std::setw(3) << row << ' ';
+        cout << setw(3) << row << ' ';
         for (int cell : grid[row]) {
-            std::cout << std::setw(3) << cell;
+            cout << setw(3) << cell;
         }
-        std::cout << '\n';
+        cout << '\n';
     }
 }
 
 void swapCells(Grid& grid, Position first, Position second) {
-    std::swap(grid[first.row][first.column], grid[second.row][second.column]);
+    swap(grid[first.row][first.column], grid[second.row][second.column]);
 }
 
 // Finds every horizontal and vertical run of 3 or more values and replaces it
@@ -74,7 +76,7 @@ bool checkMatches(Grid& grid) {
 
     const int rows = static_cast<int>(grid.size());
     const int columns = static_cast<int>(grid[0].size());
-    std::vector<std::vector<bool>> matched(rows, std::vector<bool>(columns, false));
+    vector<vector<bool>> matched(rows, vector<bool>(columns, false));
 
     for (int row = 0; row < rows; ++row) {
         int start = 0;
@@ -127,8 +129,8 @@ bool hasMatches(const Grid& grid) {
     return checkMatches(copy);
 }
 
-void applyGravityAndFill(Grid& grid, std::mt19937& randomGenerator) {
-    std::uniform_int_distribution<int> color(1, ColorCount);
+void applyGravityAndFill(Grid& grid, mt19937& randomGenerator) {
+    uniform_int_distribution<int> color(1, ColorCount);
 
     for (int column = 0; column < static_cast<int>(grid[0].size()); ++column) {
         int writeRow = static_cast<int>(grid.size()) - 1;
@@ -145,13 +147,13 @@ void applyGravityAndFill(Grid& grid, std::mt19937& randomGenerator) {
     }
 }
 
-void resolveMatches(Grid& grid, std::mt19937& randomGenerator) {
+void resolveMatches(Grid& grid, mt19937& randomGenerator) {
     while (checkMatches(grid)) {
         applyGravityAndFill(grid, randomGenerator);
     }
 }
 
-bool makeMove(Grid& grid, Position first, Position second, std::mt19937& randomGenerator) {
+bool makeMove(Grid& grid, Position first, Position second, mt19937& randomGenerator) {
     if (!isInside(grid, first.row, first.column) ||
         !isInside(grid, second.row, second.column) ||
         !areAdjacent(first, second)) {
@@ -170,11 +172,11 @@ bool makeMove(Grid& grid, Position first, Position second, std::mt19937& randomG
 }
 
 int main() {
-    std::random_device seed;
-    std::mt19937 randomGenerator(seed());
+    random_device seed;
+    mt19937 randomGenerator(seed());
     Grid grid = initializeGrid(Rows, Columns, randomGenerator);
 
-    std::cout << "My 3-match game.\n"
+    cout << "My 3-match game.\n"
               << "Enter two adjacent positions as: row column row column.\n"
               << "Enter -1 to quit.\n";
 
@@ -182,25 +184,25 @@ int main() {
         // A new swap is only allowed after all existing matches are resolved.
         resolveMatches(grid, randomGenerator);
         printGrid(grid);
-        std::cout << "\nSwap: ";
+        cout << "\nSwap: ";
 
         Position first{};
         Position second{};
-        if (!(std::cin >> first.row)) {
+        if (!(cin >> first.row)) {
             break;
         }
         if (first.row == -1) {
             break;
         }
-        if (!(std::cin >> first.column >> second.row >> second.column)) {
-            std::cerr << "Please enter four integer coordinates.\n";
+        if (!(cin >> first.column >> second.row >> second.column)) {
+            cerr << "Please enter four integer coordinates.\n";
             break;
         }
 
         if (makeMove(grid, first, second, randomGenerator)) {
-            std::cout << "Match found.\n";
+            cout << "Match found.\n";
         } else {
-            std::cout << "Invalid move or no match; the swap was reversed.\n";
+            cout << "Invalid move or no match; the swap was reversed.\n";
         }
     }
 
