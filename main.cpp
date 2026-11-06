@@ -8,6 +8,7 @@
 #include <vector>
 
 #define WIN32_LEAN_AND_MEAN
+//#define //NOMINMAX
 #include <windows.h>
 
 using namespace std;
@@ -61,7 +62,10 @@ void swapCells(Grid& grid, Position first, Position second) {
 
 // Finds every horizontal and vertical run of 3 or more values and replaces it
 // with 0. Returns true when at least one match was found.
-bool checkMatches(Grid& grid) {
+bool checkMatches(Grid& grid, int* matchCount = nullptr) {
+    if (matchCount != nullptr) {
+        *matchCount = 0;
+    }
     if (grid.empty() || grid[0].empty()) {
         return false;
     }
@@ -104,12 +108,63 @@ bool checkMatches(Grid& grid) {
         }
     }
 
+    // A 2x2 block is a match even though neither its rows nor columns contain
+    // three tiles.
+    for (int row = 0; row + 1 < rows; ++row) {
+        for (int column = 0; column + 1 < columns; ++column) {
+            const int value = grid[row][column];
+            if (value != 0 && grid[row][column + 1] == value &&
+                grid[row + 1][column] == value &&
+                grid[row + 1][column + 1] == value) {
+                matched[row][column] = true;
+                matched[row][column + 1] = true;
+                matched[row + 1][column] = true;
+                matched[row + 1][column + 1] = true;
+            }
+        }
+    }
+
+    const Grid originalGrid = grid;
     bool foundMatch = false;
     for (int row = 0; row < rows; ++row) {
         for (int column = 0; column < columns; ++column) {
             if (matched[row][column]) {
                 grid[row][column] = 0;
                 foundMatch = true;
+            }
+        }
+    }
+
+    // Count connected matched tiles, so a line, 2x2 block, or L shape counts
+    // as one match instead of counting each cleared tile.
+    if (matchCount != nullptr) {
+        vector<vector<bool>> visited(rows, vector<bool>(columns, false));
+        const int rowOffsets[] = {-1, 1, 0, 0};
+        const int columnOffsets[] = {0, 0, -1, 1};
+        for (int row = 0; row < rows; ++row) {
+            for (int column = 0; column < columns; ++column) {
+                if (!matched[row][column] || visited[row][column]) {
+                    continue;
+                }
+                ++*matchCount;
+                vector<Position> pending{{row, column}};
+                visited[row][column] = true;
+                while (!pending.empty()) {
+                    const Position current = pending.back();
+                    pending.pop_back();
+                    for (int direction = 0; direction < 4; ++direction) {
+                        const int nextRow = current.row + rowOffsets[direction];
+                        const int nextColumn = current.column + columnOffsets[direction];
+                        if (isInside(grid, nextRow, nextColumn) &&
+                            matched[nextRow][nextColumn] &&
+                            originalGrid[nextRow][nextColumn] ==
+                                originalGrid[current.row][current.column] &&
+                            !visited[nextRow][nextColumn]) {
+                            visited[nextRow][nextColumn] = true;
+                            pending.push_back({nextRow, nextColumn});
+                        }
+                    }
+                }
             }
         }
     }
@@ -183,13 +238,17 @@ void animateGravityAndFill(Grid& grid, mt19937& randomGenerator,
 }
 
 void resolveMatches(Grid& grid, mt19937& randomGenerator,
+                    int& matchCount,
                     const AnimationFrame& showFrame = {}) {
-    while (checkMatches(grid)) {
+    int matchesThisResolution = 0;
+    while (checkMatches(grid, &matchesThisResolution)) {
+        matchCount += matchesThisResolution;
         animateGravityAndFill(grid, randomGenerator, showFrame);
     }
 }
 
 bool makeMove(Grid& grid, Position first, Position second, mt19937& randomGenerator,
+              int& matchCount,
               const AnimationFrame& showFrame = {}) {
     if (!isInside(grid, first.row, first.column) ||
         !isInside(grid, second.row, second.column) ||
@@ -198,13 +257,15 @@ bool makeMove(Grid& grid, Position first, Position second, mt19937& randomGenera
     }
 
     swapCells(grid, first, second);
-    if (!checkMatches(grid)) {
+    int matchesThisMove = 0;
+    if (!checkMatches(grid, &matchesThisMove)) {
         swapCells(grid, first, second); // Invalid move: restore the original grid.
         return false;
     }
 
+    matchCount += matchesThisMove;
     animateGravityAndFill(grid, randomGenerator, showFrame);
-    resolveMatches(grid, randomGenerator, showFrame); // Check for new matches after gravity and fill.
+    resolveMatches(grid, randomGenerator, matchCount, showFrame); // Check for new matches after gravity and fill.
     if (!hasPossibleMove(grid)) {
         reorganizeGrid(grid, randomGenerator);
         if (showFrame) {
@@ -283,6 +344,7 @@ constexpr int StartButtonId = 1001;
 
 Grid gameGrid;
 mt19937 randomGenerator;
+int matchCount = 0;
 Position selected{};
 bool hasSelection = false;
 bool inputBlocked = false;
@@ -305,9 +367,9 @@ int tileSizeForWindow(HWND window) {
     GetClientRect(window, &client);
     const int rows = static_cast<int>(gameGrid.size());
     const int columns = rows == 0 ? DefaultColumns : static_cast<int>(gameGrid[0].size());
-    const int widthForTiles = (client.right - 40 - TileGap * (columns - 1)) / columns;
+    const int widthForTiles = (client.right - 190 - TileGap * (columns - 1)) / columns;
     const int heightForTiles = (client.bottom - 210 - TileGap * (rows - 1)) / rows;
-    return max(24, min(MaxTileSize, min(widthForTiles, heightForTiles)));
+    return std::max(24, std::min(MaxTileSize, std::min(widthForTiles, heightForTiles)));
 }
 
 RECT boardRect(HWND window) {
@@ -318,7 +380,7 @@ RECT boardRect(HWND window) {
     const int tileSize = tileSizeForWindow(window);
     const int boardWidth = columns * tileSize + (columns - 1) * TileGap;
     const int boardHeight = rows * tileSize + (rows - 1) * TileGap;
-    const int left = (client.right - boardWidth) / 2;
+    const int left = static_cast<int>(std::max(20L, (client.right - 170 - boardWidth) / 2));
     const int top = 120;
     return {left, top, left + boardWidth, top + boardHeight};
 }
@@ -334,6 +396,7 @@ void startNewGame(int rows, int columns) {
     }
     hasSelection = false;
     inputBlocked = false;
+    matchCount = 0;
     setStatus("Select a tile, then select an adjacent tile to swap.");
 }
 
@@ -440,8 +503,13 @@ void paintWindow(HWND window, HDC deviceContext) {
         return;
     }
 
-    drawText(deviceContext, "Swap adjacent tiles to make a line of three", 0, 70,
+    drawText(deviceContext, "Match lines, 2x2 blocks, or L shapes", 0, 70,
              client.right, 26, RGB(163, 176, 197), 15, DT_CENTER | DT_SINGLELINE);
+
+    drawText(deviceContext, "MATCHES", client.right - 155, 150, 130, 26,
+             RGB(163, 176, 197), 15, DT_CENTER | DT_SINGLELINE);
+    drawText(deviceContext, to_string(matchCount), client.right - 155, 180, 130, 55,
+             RGB(245, 248, 252), 38, DT_CENTER | DT_SINGLELINE);
 
     const RECT board = boardRect(window);
     const int tileSize = tileSizeForWindow(window);
@@ -464,7 +532,7 @@ void paintWindow(HWND window, HDC deviceContext) {
             }
 
             drawText(deviceContext, to_string(value), left, top + tileSize / 5,
-                     tileSize, tileSize / 2, RGB(255, 255, 255), max(14, tileSize / 3),
+                     tileSize, tileSize / 2, RGB(255, 255, 255), std::max(14, tileSize / 3),
                      DT_CENTER | DT_SINGLELINE);
         }
     }
@@ -517,7 +585,7 @@ LRESULT CALLBACK windowProcedure(HWND window, UINT message, WPARAM wParam, LPARA
                 Sleep(250);
             };
             const bool validMove = makeMove(gameGrid, selected, clicked, randomGenerator,
-                                            showGravityFrame);
+                                            matchCount, showGravityFrame);
             inputBlocked = false;
             hasSelection = false;
             if (validMove) {
