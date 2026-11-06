@@ -530,10 +530,6 @@ void paintWindow(HWND window, HDC deviceContext) {
                 SelectObject(deviceContext, previousPen);
                 DeleteObject(pen);
             }
-
-            drawText(deviceContext, to_string(value), left, top + tileSize / 5,
-                     tileSize, tileSize / 2, RGB(255, 255, 255), std::max(14, tileSize / 3),
-                     DT_CENTER | DT_SINGLELINE);
         }
     }
 
